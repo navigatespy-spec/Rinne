@@ -45,6 +45,29 @@ jobs:
           assert (dest/'index.html').is_file()
           print(m['release'],len(seen),'verified files')
           PY
+      - name: Apply verified UI-only update
+        shell: bash
+        run: |
+          python3 - <<'PYUI'
+          from pathlib import Path
+          import hashlib,json,zipfile
+          source=Path('rinne-ui-update-01.zip');dest=Path('_site')
+          assert hashlib.sha256(source.read_bytes()).hexdigest()=='aeef549c260f0a132ce0c330764b3e2d64dc40669e62a151f4e478a1d1c6781f', 'UI update file differs'
+          allowed={'index.html','ui.js','ui_update.css','release.json'}
+          with zipfile.ZipFile(source) as z:
+              assert len(z.namelist())==5 and set(z.namelist())==allowed|{'manifest.json'}, 'Unexpected UI patch scope'
+              patch=json.loads(z.read('manifest.json'))
+              assert set(patch['files'])==allowed
+              for name,expected in patch['files'].items():
+                  data=z.read(name)
+                  assert hashlib.sha256(data).hexdigest()==expected,name
+                  (dest/name).write_bytes(data)
+          baseline=json.loads(Path('payload-manifest.json').read_text())
+          for name,expected in baseline['files'].items():
+              if name not in allowed:
+                  assert hashlib.sha256((dest/name).read_bytes()).hexdigest()==expected,name
+          print(patch['release'],'UI update verified; engine, CPU, data, all images unchanged')
+          PYUI
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
@@ -52,3 +75,4 @@ jobs:
       - name: Deploy test candidate
         id: deployment
         uses: actions/deploy-pages@v4
+
