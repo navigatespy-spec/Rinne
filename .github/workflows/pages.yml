@@ -1,0 +1,54 @@
+name: Publish audited RINNE candidate
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify and unpack audited game
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,zipfile
+          m=json.loads(Path('payload-manifest.json').read_text())
+          dest=Path('_site');dest.mkdir(exist_ok=True)
+          seen=set()
+          for part in m['parts']:
+              p=Path(part['name'])
+              assert p.is_file(),f'Missing upload: {p}'
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==part['sha256'],f'Bad upload: {p}'
+              with zipfile.ZipFile(p) as z:
+                  for item in z.infolist():
+                      path=Path(item.filename)
+                      assert not path.is_absolute() and '..' not in path.parts
+                      assert item.filename not in seen
+                      assert item.filename in m['files']
+                      seen.add(item.filename)
+                  z.extractall(dest)
+          assert seen==set(m['files']), 'Incomplete or unexpected site files'
+          for name,expected in m['files'].items():
+              assert hashlib.sha256((dest/name).read_bytes()).hexdigest()==expected,name
+          assert (dest/'index.html').is_file()
+          print(m['release'],len(seen),'verified files')
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy test candidate
+        id: deployment
+        uses: actions/deploy-pages@v4
